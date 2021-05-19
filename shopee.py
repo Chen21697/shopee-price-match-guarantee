@@ -8,31 +8,35 @@ import os
 
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 import spacy
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
 
 import re
 import nltk
-# uncomment the next line if you're running the first time
+# uncomment the next line if you're running for the first time
 # nltk.download('popular')
 
+from customDataset import shopeeImageDataset
+
+dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 #%%
-def load_data():
-    df = pd.read_csv('../shopee/train.csv')
-    # convert the title columns into directory + filename 
-    df['image'] = df['image'].apply(lambda x: '../shopee/train_images'+ x)
+def preprocess_data(directory):
+    df = pd.read_csv(directory)
     
     # clean the title
     df2 = df['title'].apply(lambda x: preprocess_text(x, flg_stemm=False, flg_lemm=True))
-    df.insert(4, "clean_titel", df2)
-    train, valid = train_test_split(df, test_size=0.1, shuffle=True)
+    df.insert(4, "clean_title", df2)
     
-    return train.iloc[:, :-1], train.iloc[:, -1],  valid.iloc[:, :-1], valid.iloc[:, -1]
+    df.to_csv('new_train.csv', index=False)
 
 def preprocess_text(text, flg_stemm=False, flg_lemm=True):
     lst_stopwords = nltk.corpus.stopwords.words("english")
@@ -63,4 +67,24 @@ def preprocess_text(text, flg_stemm=False, flg_lemm=True):
 
 #%%
 if __name__ == "__main__":
-    x_train, y_train, x_valid, y_valid = load_data()
+    batch_size = 32
+    
+    directory = '../shopee/train.csv'
+    preprocess_data(directory)
+    
+    my_transforms = transforms.Compose([
+       transforms.ToTensor(), # range [0, 255] -> [0.0, 0.1]
+       transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    
+    # load data
+    train_set = shopeeImageDataset(csv_file = 'new_train.csv',
+                                   root_dir = 'train_images',
+                                   transform = my_transforms)
+    
+    train_loader = DataLoader(dataset = train_set, batch_size = batch_size, shuffle = True)
+
+    
+    
+   
+    
+    
