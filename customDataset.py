@@ -13,19 +13,19 @@ from skimage import io
 #%%
 class shopeeImageDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
-        self.annotation = pd.read_csv(csv_file)
+        self.annotations = pd.read_csv(csv_file)
         self.root_dir = root_dir
-        self.transfrom = transform
+        self.transform = transform
     
     def __len__(self):
-        return len(self.annotation)
+        return len(self.annotations)
     
     def __getitem__(self, index):
-        img_path = os.path.join(self.root_dir, self.annotation['image'])
+        img_path = os.path.join(self.root_dir, str(self.annotations.iloc[index, 1]))
         image = io.imread(img_path)
-        y_label = torch.tensor(int(self.annotations['label_group']))
+        y_label = torch.tensor(int(self.annotations.iloc[index, 5]))
         
         if self.transform:
-            image = self.tranform(image)
+            image = self.transform(image)
             
         return (image, y_label)

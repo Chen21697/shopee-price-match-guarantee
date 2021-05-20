@@ -11,6 +11,7 @@ import pandas as pd
 import tensorflow as tf
 import spacy
 import matplotlib.pyplot as plt
+import sys
 
 import torch
 import torch.nn as nn
@@ -18,6 +19,7 @@ import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
+from efficientnet_pytorch import EfficientNet
 
 import re
 import nltk
@@ -65,23 +67,49 @@ def preprocess_text(text, flg_stemm=False, flg_lemm=True):
     text = " ".join(lst_text)
     return text
 
+def test():
+    df = pd.read_csv('../shopee/new_train.csv')
+    print(df.iloc[0,1])
+
 #%%
 if __name__ == "__main__":
-    batch_size = 32
+    num_epochs = 1
+    in_channel = 2
+    batch_size = 64
+    lr = 0.001
     
     directory = '../shopee/train.csv'
     preprocess_data(directory)
+    
+    #test()
+    #sys.exit()
     
     my_transforms = transforms.Compose([
        transforms.ToTensor(), # range [0, 255] -> [0.0, 0.1]
        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
-    # load data
-    train_set = shopeeImageDataset(csv_file = 'new_train.csv',
+    # load images data
+    images_dataset = shopeeImageDataset(csv_file = 'new_train.csv',
                                    root_dir = 'train_images',
                                    transform = my_transforms)
     
-    train_loader = DataLoader(dataset = train_set, batch_size = batch_size, shuffle = True)
+    images_train_set, images_test_set = torch.utils.data.random_split(images_dataset, [30000, 4250])
+    train_loader = DataLoader(dataset = images_train_set, batch_size = batch_size, shuffle = True)
+    test_loader =  DataLoader(dataset = images_test_set, batch_size = batch_size, shuffle = True)
+    
+    # load pre-trained efficientnet as feature extraction
+    model = EfficientNet.from_pretrained('efficientnet-b3')
+    
+    for epoch in range(num_epochs):
+        train_loss, test_loss = [], []
+        
+        for batch_idx, (data, targets) in enumerate(train_loader):
+            data = data.to(dev)
+            target = targets.to(dev)
+            
+            feature = model.extract_features(data)
+            # TODO: resize
+            print('done')
 
     
     
