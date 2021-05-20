@@ -75,17 +75,16 @@ def test():
 if __name__ == "__main__":
     num_epochs = 1
     in_channel = 2
-    batch_size = 64
+    batch_size = 10
     lr = 0.001
     
     directory = '../shopee/train.csv'
     preprocess_data(directory)
-    
-    #test()
-    #sys.exit()
+
     
     my_transforms = transforms.Compose([
        transforms.ToTensor(), # range [0, 255] -> [0.0, 0.1]
+       transforms.Resize((64, 64)),
        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
     # load images data
@@ -98,7 +97,8 @@ if __name__ == "__main__":
     test_loader =  DataLoader(dataset = images_test_set, batch_size = batch_size, shuffle = True)
     
     # load pre-trained efficientnet as feature extraction
-    model = EfficientNet.from_pretrained('efficientnet-b3')
+    image_model = EfficientNet.from_pretrained('efficientnet-b3')
+    image_model.to(dev)
     
     for epoch in range(num_epochs):
         train_loss, test_loss = [], []
@@ -107,8 +107,7 @@ if __name__ == "__main__":
             data = data.to(dev)
             target = targets.to(dev)
             
-            feature = model.extract_features(data)
-            # TODO: resize
+            feature = image_model.extract_features(data)
             print('done')
 
     
