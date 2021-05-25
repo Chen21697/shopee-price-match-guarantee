@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 from efficientnet_pytorch import EfficientNet
 from torchtext.data import Field, BucketIterator, TabularDataset
 from transformers import AutoModel, BertTokenizerFast
+from transformers import AdamW
 
 import re
 import nltk
@@ -81,26 +82,63 @@ def tokenize_en(sentence):
     return [token.text for token in en.tokenizer(sentence)]
 
 
-def train()
+def train(model, data_loader, optimizer, crit, num_epochs):
+    model.train()
+    
+    epoch_loss = 0
+        
+    for batch_idx, (image_data, text_seq, text_mask, targets) in enumerate(data_loader):
+        image_data = image_data.to(dev)
+        text_seq = text_seq.to(dev)
+        text_mask = text_mask.to(dev)
+        targets = targets.to(dev)
+        
+        model.zero_grad()
+        preds = model(image_data, text_seq, text_mask)
+        print("targetssize", targets.size())
+        print("preds size", preds.size())
+        
+        print("checkpoint")
+        loss = crit(preds, targets)
+
+        loss.backward()
+
+        optimizer.step()
+
+        epoch_loss += loss.item()
+        
+    avg_loss = epoch_loss / len(data_loader)
+    
+    return avg_loss
+        
+    
+    
+    
 #%%
 class bert_efficientNet(nn.Module):
     def __init__(self, bert, efficient_net):
         
-        super(bert_efficientNet, self).__init__()
+        super().__init__()
         
         # two main models
         self.bert = bert
         self.efficient_net = efficient_net
         
         self.drouput = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(768 + 1536, 2048)
+        self.fc1 = nn.Linear(768 + 1536*4, 2048)
+        self.fc2 = nn.Linear(2048, 11014)
         
     def forward(self, image, sent_id, mask):
-        bert_output = self.bert(sent_id, attention_mask = mask)
-        effi_output = self.efficient_net.extract_features(image)
         
-        x = torch.cat(bert_output[1], effi_output, dim=1)
+        effi_output = self.efficient_net.extract_features(image)
+        bert_output = self.bert(sent_id, attention_mask = mask)
+        
+        effi_output = torch.flatten(effi_output, 1)
+        
+        x = torch.cat((bert_output[1], effi_output), dim=1)
         x = F.relu(self.fc1(x))
+        x = self.drouput(x)
+        x = self.fc2(x)
         
         return x
     
@@ -108,7 +146,7 @@ class bert_efficientNet(nn.Module):
 if __name__ == "__main__":
     num_epochs = 1
     in_channel = 2
-    batch_size = 10
+    batch_size = 1
     lr = 0.001
     
     directory = '../shopee/train.csv'
@@ -132,34 +170,33 @@ if __name__ == "__main__":
     test_loader =  DataLoader(dataset = images_test_set, batch_size = batch_size, shuffle = True)
         
     
-    # load pre-trained efficientnet as feature extraction
+    # import efficientnet b3 model
     image_model = EfficientNet.from_pretrained('efficientnet-b3')
     # import BERT-base pretrained model
     bert = AutoModel.from_pretrained('bert-base-uncased')
     
+    # put the model into GPU
     image_model.to(dev)
     bert.to(dev)
     
     # freeze all the parameters
     for param in bert.parameters():
         param.requires_grad = False
+    for param in image_model.parameters():
+        param.requires_grad = False
         
     #sys.exit()
+    model = bert_efficientNet(bert, image_model)
+    model.to(dev)
+    crit = nn.NLLLoss()
+    optimizer = AdamW(model.parameters())
     
     for epoch in range(num_epochs):
-        train_loss, test_loss = [], []
+        print("epoch:", epoch+1)
+        t_loss = train(model, train_loader, optimizer, crit, epoch + 1)
+        #v_loss = evalulate(model, test_loader, crit, epoch + 1)
+        print(t_loss)
         
-        for batch_idx, (image_data, text_seq, text_mask, targets) in enumerate(train_loader):
-            image_data = image_data.to(dev)
-            text_seq = text_seq.to(dev)
-            text_mask = text_mask.to(dev)
-            target = targets.to(dev)
-            
-            output = bert(text_seq, attention_mask = text_mask)
-            print(output[1])
-            #feature = image_model.extract_features(image_data)
-            print('done')
-            break
 
     
     
