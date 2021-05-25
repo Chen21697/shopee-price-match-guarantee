@@ -7,7 +7,7 @@ Created on Wed May 19 00:06:36 2021
 import os
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import Dataset
 from skimage import io
 
 import os
@@ -27,8 +27,7 @@ class shopeeImageDataset(Dataset):
                                                              pad_to_max_length=True,
                                                              truncation=True,
                                                              return_token_type_ids=False)
-        
-        # for train set
+
         self.text_train_seq = torch.tensor(self.tokens_train['input_ids'])
         self.text_train_mask = torch.tensor(self.tokens_train['attention_mask'])
         
@@ -49,5 +48,4 @@ class shopeeImageDataset(Dataset):
         t_seq = self.text_train_seq[index]
         t_mask = self.text_train_mask[index]
         
-
         return (image, t_seq, t_mask, y_label)

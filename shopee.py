@@ -30,12 +30,12 @@ import nltk
 # nltk.download('popular')
 
 from customDataset import shopeeImageDataset
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
 
 dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 en = spacy.load('en_core_web_sm')
-
-# import BERT-base pretrained model
-bert = AutoModel.from_pretrained('bert-base-uncased')
 
 # Load the BERT tokenizer
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
@@ -80,6 +80,30 @@ def preprocess_text(text, flg_stemm=False, flg_lemm=True):
 def tokenize_en(sentence):
     return [token.text for token in en.tokenizer(sentence)]
 
+
+def train()
+#%%
+class bert_efficientNet(nn.Module):
+    def __init__(self, bert, efficient_net):
+        
+        super(bert_efficientNet, self).__init__()
+        
+        # two main models
+        self.bert = bert
+        self.efficient_net = efficient_net
+        
+        self.drouput = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(768 + 1536, 2048)
+        
+    def forward(self, image, sent_id, mask):
+        bert_output = self.bert(sent_id, attention_mask = mask)
+        effi_output = self.efficient_net.extract_features(image)
+        
+        x = torch.cat(bert_output[1], effi_output, dim=1)
+        x = F.relu(self.fc1(x))
+        
+        return x
+    
 #%%
 if __name__ == "__main__":
     num_epochs = 1
@@ -106,18 +130,20 @@ if __name__ == "__main__":
     images_train_set, images_test_set = torch.utils.data.random_split(images_dataset, [30000, 4250])
     train_loader = DataLoader(dataset = images_train_set, batch_size = batch_size, shuffle = True)
     test_loader =  DataLoader(dataset = images_test_set, batch_size = batch_size, shuffle = True)
+        
     
     # load pre-trained efficientnet as feature extraction
     image_model = EfficientNet.from_pretrained('efficientnet-b3')
+    # import BERT-base pretrained model
+    bert = AutoModel.from_pretrained('bert-base-uncased')
+    
     image_model.to(dev)
+    bert.to(dev)
     
-    # create the field object
-    #EN_TEXT = Field(tokenize=tokenize_en, init_token='<sos>', eos_token='<eos>', lower=True)
-    
-    # build  the vocabulary
-    #EN_TEXT.build_vocab(train, val, vectors=[GloVe(name="6B", dim="300")])
-    
-    
+    # freeze all the parameters
+    for param in bert.parameters():
+        param.requires_grad = False
+        
     #sys.exit()
     
     for epoch in range(num_epochs):
@@ -129,8 +155,11 @@ if __name__ == "__main__":
             text_mask = text_mask.to(dev)
             target = targets.to(dev)
             
+            output = bert(text_seq, attention_mask = text_mask)
+            print(output[1])
             #feature = image_model.extract_features(image_data)
             print('done')
+            break
 
     
     
