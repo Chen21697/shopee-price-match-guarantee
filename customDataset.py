@@ -7,7 +7,7 @@ Created on Wed May 19 00:06:36 2021
 import os
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, TensorDataset
 from skimage import io
 
 import os
@@ -21,7 +21,17 @@ class shopeeImageDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.tokenizer = tokenizer
-    
+        
+        self.tokens_train = self.tokenizer.batch_encode_plus(self.annotations['clean_title'].tolist(),
+                                                             max_length = 20,
+                                                             pad_to_max_length=True,
+                                                             truncation=True,
+                                                             return_token_type_ids=False)
+        
+        # for train set
+        self.text_train_seq = torch.tensor(self.tokens_train['input_ids'])
+        self.text_train_mask = torch.tensor(self.tokens_train['attention_mask'])
+        
     def __len__(self):
         return len(self.annotations)
     
@@ -34,21 +44,10 @@ class shopeeImageDataset(Dataset):
         
         if self.transform:
             image = self.transform(image)
-            
+        
         # text part
-        max_seq_len = 20
+        t_seq = self.text_train_seq[index]
+        t_mask = self.text_train_mask[index]
         
-        tokens_train = self.tokenizer.batch_encode_plus(
-            self.annotations['clean_title'].tolist(),
-            max_length = max_seq_len,
-            pad_to_max_length=True,
-            truncation=True,
-            return_token_type_ids=False
-        )
-        
-        # for train set
-        text_train_seq = torch.tensor(tokens_train['input_ids'])
-        text_train_mask = torch.tensor(tokens_train['attention_mask'])
-        #train_y = torch.tensor(self.annotations['label_group'].tolist())
 
-        return (image, text_train_seq, text_train_mask, y_label)
+        return (image, t_seq, t_mask, y_label)

@@ -123,10 +123,12 @@ if __name__ == "__main__":
     for epoch in range(num_epochs):
         train_loss, test_loss = [], []
         
-        for batch_idx, (image_data, text_train_seq, text_train_mask, targets) in enumerate(train_loader):
+        for batch_idx, (image_data, text_seq, text_mask, targets) in enumerate(train_loader):
             image_data = image_data.to(dev)
+            text_seq = text_seq.to(dev)
+            text_mask = text_mask.to(dev)
             target = targets.to(dev)
-            print(text_train_seq)
+            
             #feature = image_model.extract_features(image_data)
             print('done')
 
