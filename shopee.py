@@ -12,6 +12,7 @@ import tensorflow as tf
 import spacy
 import matplotlib.pyplot as plt
 import sys
+import tqdm as tq
 
 import torch
 import torch.nn as nn
@@ -21,7 +22,6 @@ import torchvision.transforms as transforms
 import transformers
 from torch.utils.data import DataLoader
 from efficientnet_pytorch import EfficientNet
-from torchtext.data import Field, BucketIterator, TabularDataset
 from transformers import AutoModel, BertTokenizerFast
 from transformers import AdamW
 
@@ -49,7 +49,16 @@ def preprocess_data(directory):
     df2 = df['title'].apply(lambda x: preprocess_text(x, flg_stemm=False, flg_lemm=True))
     df.insert(4, "clean_title", df2)
     
+    # transfomr the target columns and create a hashtable
+    unique_targets = set(df['label_group'])
+    dummy_list = list(range(0,len(unique_targets)))
+    or_to_new = dict(zip(unique_targets, dummy_list))
+    new_to_or = dict(zip(dummy_list, unique_targets))
+    df['label_group'] = df['label_group'].map(or_to_new)
+    
     df.to_csv('new_train.csv', index=False)
+    
+    return or_to_new, new_to_or
 
 def preprocess_text(text, flg_stemm=False, flg_lemm=True):
     lst_stopwords = nltk.corpus.stopwords.words("english")
@@ -78,15 +87,11 @@ def preprocess_text(text, flg_stemm=False, flg_lemm=True):
     text = " ".join(lst_text)
     return text
 
-def tokenize_en(sentence):
-    return [token.text for token in en.tokenizer(sentence)]
-
-
-def train(model, data_loader, optimizer, crit, num_epochs):
+def train(model, data_loader, optimizer, crit, epoch):
     model.train()
-    
     epoch_loss = 0
-        
+    pbar = tq.tqdm(desc="Epoch {}".format(epoch), total=len(data_loader), unit="batch")
+    
     for batch_idx, (image_data, text_seq, text_mask, targets) in enumerate(data_loader):
         image_data = image_data.to(dev)
         text_seq = text_seq.to(dev)
@@ -95,10 +100,10 @@ def train(model, data_loader, optimizer, crit, num_epochs):
         
         model.zero_grad()
         preds = model(image_data, text_seq, text_mask)
-        print("targetssize", targets.size())
-        print("preds size", preds.size())
+        #print("targetssize", targets.size())
+        #print("preds size", preds.size())
         
-        print("checkpoint")
+        #print("checkpoint")
         loss = crit(preds, targets)
 
         loss.backward()
@@ -106,13 +111,12 @@ def train(model, data_loader, optimizer, crit, num_epochs):
         optimizer.step()
 
         epoch_loss += loss.item()
-        
-    avg_loss = epoch_loss / len(data_loader)
+        pbar.update(1)
     
+    pbar.close()
+    avg_loss = epoch_loss / len(data_loader)
     return avg_loss
         
-    
-    
     
 #%%
 class bert_efficientNet(nn.Module):
@@ -144,13 +148,13 @@ class bert_efficientNet(nn.Module):
     
 #%%
 if __name__ == "__main__":
-    num_epochs = 1
+    num_epochs = 5
     in_channel = 2
-    batch_size = 1
+    batch_size = 10
     lr = 0.001
     
     directory = '../shopee/train.csv'
-    preprocess_data(directory)
+    or_to_new_hash, new_to_or_hash = preprocess_data(directory)
 
     
     my_transforms = transforms.Compose([
@@ -158,7 +162,8 @@ if __name__ == "__main__":
        transforms.Resize((64, 64)),
        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
-
+    
+    
     # load images data
     images_dataset = shopeeImageDataset(csv_file = 'new_train.csv',
                                    root_dir = 'train_images',
