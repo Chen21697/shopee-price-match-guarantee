@@ -86,6 +86,26 @@ def preprocess_text(text, flg_stemm=False, flg_lemm=True):
     ## back to string from list
     text = " ".join(lst_text)
     return text
+#%%
+def accuracy(data_loader, model):
+    num_correct = 0
+    num_samples = 0
+    model.eval()
+    
+    with torch.no_grad():
+        for x1, x2, x3, y in data_loader:
+            x1 = x1.to(dev)
+            x2 = x2.to(dev)
+            x3 = x3.to(dev)
+            y = y.to(dev)
+            
+            scores = model(x1, x2, x3)
+            _, preds = scores.max(1)
+            num_correct += (preds == y).sum()
+            num_samples += preds.size(0)
+        
+        print('Training accuracy:', float(num_correct)/float(num_samples) *100)
+#%%
 
 def train(model, data_loader, optimizer, crit, epoch):
     model.train()
@@ -103,9 +123,9 @@ def train(model, data_loader, optimizer, crit, epoch):
         #print("targetssize", targets.size())
         #print("preds size", preds.size())
         
-        #print("checkpoint")
         loss = crit(preds, targets)
-
+        
+        optimizer.zero_grad()
         loss.backward()
 
         optimizer.step()
@@ -148,9 +168,9 @@ class bert_efficientNet(nn.Module):
     
 #%%
 if __name__ == "__main__":
-    num_epochs = 5
+    num_epochs = 10
     in_channel = 2
-    batch_size = 10
+    batch_size = 16
     lr = 0.001
     
     directory = '../shopee/train.csv'
@@ -158,9 +178,10 @@ if __name__ == "__main__":
 
     
     my_transforms = transforms.Compose([
-       transforms.ToTensor(), # range [0, 255] -> [0.0, 0.1]
-       transforms.Resize((64, 64)),
-       transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        transforms.ToPILImage(),
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(), # range [0, 255] -> [0.0, 0.1]
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
     
     
@@ -180,7 +201,6 @@ if __name__ == "__main__":
     # import BERT-base pretrained model
     bert = AutoModel.from_pretrained('bert-base-uncased')
     
-    # put the model into GPU
     image_model.to(dev)
     bert.to(dev)
     
@@ -193,18 +213,17 @@ if __name__ == "__main__":
     #sys.exit()
     model = bert_efficientNet(bert, image_model)
     model.to(dev)
-    crit = nn.NLLLoss()
+    crit = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters())
-    
+    t_loss_history = []
     for epoch in range(num_epochs):
-        print("epoch:", epoch+1)
         t_loss = train(model, train_loader, optimizer, crit, epoch + 1)
+        accuracy(train_loader, model)
+        
         #v_loss = evalulate(model, test_loader, crit, epoch + 1)
-        print(t_loss)
+        t_loss_history.append(t_loss)
+        
+        print("Training loss:", t_loss)
         
 
-    
-    
-   
-    
-    
+     
