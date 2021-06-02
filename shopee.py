@@ -124,12 +124,18 @@ def train(model, data_loader, optimizer, crit, epoch):
         targets = targets.to(dev)
         
         model.zero_grad()
-        preds = model(image_data, text_seq, text_mask)
+        preds_1, preds_2, preds_3 = model(image_data, text_seq, text_mask)
+        #preds_2= model(image_data, text_seq, text_mask)
+        
+        
         #print("targetssize", targets.size())
         #print("preds size", preds.size())
         
-        loss = crit(preds, targets)
+        loss1 = crit(preds_1, targets)
+        loss2 = crit(preds_2, targets)
+        loss3 = crit(preds_3, targets)
         
+        loss = loss1 + loss2 + loss3
         optimizer.zero_grad()
         loss.backward()
 
@@ -156,6 +162,12 @@ class bert_efficientNet(nn.Module):
         #TODO make sure it's the right one to use
         self.image_model_nums_ftrs = self.efficient_net._fc.in_features #1536, TODO
         
+        self.image_fc = nn.Linear(1000,2048)
+        self.image_fc2 = nn.Linear(2048, 11014)
+        
+        self.text_fc = nn.Linear(768, 2048)
+        self.text_fc2 = nn.Linear(2048, 11014)
+        
         self.drouput = nn.Dropout(0.2)
         
         self.fc1 = nn.Linear(768 + 1000, 2048)
@@ -180,7 +192,16 @@ class bert_efficientNet(nn.Module):
         x = self.fc2(x)
         x = F.relu(x)
         
-        return x
+        y = self.image_fc(effi_output)
+        y = F.relu(y)
+        y = self.image_fc2(y)
+        y = F.relu(y)
+        
+        z = self.text_fc(bert_output[1])
+        z = F.relu(z)
+        z = self.text_fc2(z)
+        z = F.relu(z)
+        return x, y, z
     
 #%%
 if __name__ == "__main__":
