@@ -6,6 +6,7 @@ Created on Thu May 13 12:58:38 2021
 """
 import os
 
+import argparse
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -40,6 +41,10 @@ en = spacy.load('en_core_web_sm')
 
 # Load the BERT tokenizer
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--eval', dest='eval', action='store_true', default=False)
+args = parser.parse_args()
 
 #%%
 def preprocess_data(directory):
@@ -86,7 +91,7 @@ def preprocess_text(text, flg_stemm=False, flg_lemm=True):
     ## back to string from list
     text = " ".join(lst_text)
     return text
-#%%
+
 def accuracy(data_loader, model):
     num_correct = 0
     num_samples = 0
@@ -101,11 +106,11 @@ def accuracy(data_loader, model):
             
             scores = model(x1, x2, x3)
             _, preds = scores.max(1)
+            print(preds == y)
             num_correct += (preds == y).sum()
             num_samples += preds.size(0)
         
         print('Training accuracy:', float(num_correct)/float(num_samples) *100)
-#%%
 
 def train(model, data_loader, optimizer, crit, epoch):
     model.train()
@@ -148,21 +153,32 @@ class bert_efficientNet(nn.Module):
         self.bert = bert
         self.efficient_net = efficient_net
         
-        self.drouput = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(768 + 1536*4, 2048)
+        #TODO make sure it's the right one to use
+        self.image_model_nums_ftrs = self.efficient_net._fc.in_features #1536, TODO
+        
+        self.drouput = nn.Dropout(0.2)
+        
+        self.fc1 = nn.Linear(768 + 1000, 2048)
+        self.batch_normal = nn.BatchNorm1d(2048)
+                
         self.fc2 = nn.Linear(2048, 11014)
         
     def forward(self, image, sent_id, mask):
         
-        effi_output = self.efficient_net.extract_features(image)
+        effi_output = self.efficient_net(image)
         bert_output = self.bert(sent_id, attention_mask = mask)
         
-        effi_output = torch.flatten(effi_output, 1)
-        
+        # effi_output = torch.flatten(effi_output, 1)
+
         x = torch.cat((bert_output[1], effi_output), dim=1)
-        x = F.relu(self.fc1(x))
+        
+        x = self.fc1(x)
+        x = self.batch_normal(x)
+        x = F.relu(x)
+
         x = self.drouput(x)
         x = self.fc2(x)
+        x = F.relu(x)
         
         return x
     
@@ -179,7 +195,7 @@ if __name__ == "__main__":
     
     my_transforms = transforms.Compose([
         transforms.ToPILImage(),
-        transforms.Resize((64, 64)),
+        transforms.Resize((128, 128)),
         transforms.ToTensor(), # range [0, 255] -> [0.0, 0.1]
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
@@ -204,6 +220,7 @@ if __name__ == "__main__":
     image_model.to(dev)
     bert.to(dev)
     
+    
     # freeze all the parameters
     for param in bert.parameters():
         param.requires_grad = False
@@ -216,14 +233,20 @@ if __name__ == "__main__":
     crit = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters())
     t_loss_history = []
-    for epoch in range(num_epochs):
-        t_loss = train(model, train_loader, optimizer, crit, epoch + 1)
-        accuracy(train_loader, model)
-        
-        #v_loss = evalulate(model, test_loader, crit, epoch + 1)
-        t_loss_history.append(t_loss)
-        
-        print("Training loss:", t_loss)
+    
+    if not args.eval:
+        print("Training the model")
+    
+        for epoch in range(num_epochs):
+            t_loss = train(model, train_loader, optimizer, crit, epoch + 1)
+            #accuracy(train_loader, model)
+            t_loss_history.append(t_loss)
+            print("Training loss:", t_loss)
+            torch.save(model.state_dict(), "best-checkpoint.pt")
+            
+    model.load_state_dict(torch.load("best-checkpoint.pt"))
+    print("\n")
+    print("Running test evaluation:")
         
 
      
