@@ -242,7 +242,8 @@ if __name__ == "__main__":
             #accuracy(train_loader, model)
             t_loss_history.append(t_loss)
             print("Training loss:", t_loss)
-            torch.save(model.state_dict(), "best-checkpoint.pt")
+            
+        torch.save(model.state_dict(), "best-checkpoint.pt")
             
     model.load_state_dict(torch.load("best-checkpoint.pt"))
     print("\n")
