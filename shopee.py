@@ -5,7 +5,7 @@ Created on Thu May 13 12:58:38 2021
 @author: s1972
 """
 import os
-
+import math
 import argparse
 import numpy as np
 import pandas as pd
@@ -104,9 +104,8 @@ def accuracy(data_loader, model):
             x3 = x3.to(dev)
             y = y.to(dev)
             
-            scores = model(x1, x2, x3)
+            scores = model(x1, x2, x3, y)
             _, preds = scores.max(1)
-            print(preds == y)
             num_correct += (preds == y).sum()
             num_samples += preds.size(0)
         
@@ -116,21 +115,17 @@ def train(model, data_loader, optimizer, crit, epoch):
     model.train()
     epoch_loss = 0
     pbar = tq.tqdm(desc="Epoch {}".format(epoch), total=len(data_loader), unit="batch")
-    
-    for batch_idx, (image_data, text_seq, text_mask, targets) in enumerate(data_loader):
+   
+    for batch, (image_data, text_seq, text_mask, targets) in enumerate(data_loader):
+            
         image_data = image_data.to(dev)
         text_seq = text_seq.to(dev)
         text_mask = text_mask.to(dev)
         targets = targets.to(dev)
         
         model.zero_grad()
-        preds_1, preds_2, preds_3 = model(image_data, text_seq, text_mask)
-        #preds_2= model(image_data, text_seq, text_mask)
-        
-        
-        #print("targetssize", targets.size())
-        #print("preds size", preds.size())
-        
+        preds_1, preds_2, preds_3 = model(image_data, text_seq, text_mask, targets)
+           
         loss1 = crit(preds_1, targets)
         loss2 = crit(preds_2, targets)
         loss3 = crit(preds_3, targets)
@@ -138,9 +133,9 @@ def train(model, data_loader, optimizer, crit, epoch):
         loss = loss1 + loss2 + loss3
         optimizer.zero_grad()
         loss.backward()
-
+    
         optimizer.step()
-
+    
         epoch_loss += loss.item()
         pbar.update(1)
     
@@ -150,57 +145,139 @@ def train(model, data_loader, optimizer, crit, epoch):
         
     
 #%%
+class ArcMarginProduct(nn.Module):
+    def __init__(self, in_features, out_features, scale=30.0, margin=0.50, easy_margin=False, ls_eps=0.0):
+        super(ArcMarginProduct, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.scale = scale
+        self.margin = margin
+        self.ls_eps = ls_eps  # label smoothing
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+        self.easy_margin = easy_margin
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        self.th = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
+
+    def forward(self, input, label):
+        # --------------------------- cos(theta) & phi(theta) ---------------------------
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+        phi = cosine * self.cos_m - sine * self.sin_m
+        if self.easy_margin:
+            phi = torch.where(cosine > 0, phi, cosine)
+        else:
+            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+        # --------------------------- convert label to one-hot ---------------------------
+        # one_hot = torch.zeros(cosine.size(), requires_grad=True, device='cuda')
+        one_hot = torch.zeros(cosine.size(), device='cuda')
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+        if self.ls_eps > 0:
+            one_hot = (1 - self.ls_eps) * one_hot + self.ls_eps / self.out_features
+        # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
+        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
+        output *= self.scale
+
+        return output
+
+
 class bert_efficientNet(nn.Module):
     def __init__(self, bert, efficient_net):
         
         super().__init__()
         
         # two main models
-        self.bert = bert
-        self.efficient_net = efficient_net
+        self.text_backbone = bert
+        self.image_backbone = efficient_net
         
-        #TODO make sure it's the right one to use
-        self.image_model_nums_ftrs = self.efficient_net._fc.in_features #1536, TODO
+        final_in_features = self.image_backbone._fc.in_features #1536
+        self.image_backbone.fc = nn.Identity()
+        self.image_backbone.global_pool = nn.Identity()
         
-        self.image_fc = nn.Linear(1000,2048)
-        self.image_fc2 = nn.Linear(2048, 11014)
+        self.pooling = nn.AdaptiveAvgPool2d(1)
+        self.image_drouput = nn.Dropout(0.2)
+        self.text_drouput = nn.Dropout(0.2)
+        self.concat_drouput = nn.Dropout(0.2)
         
+        self.image_fc = nn.Linear(final_in_features, 2048)
         self.text_fc = nn.Linear(768, 2048)
-        self.text_fc2 = nn.Linear(2048, 11014)
+        self.concat_fc = nn.Linear(final_in_features + 768, 2048)
         
-        self.drouput = nn.Dropout(0.2)
+        self.image_bn = nn.BatchNorm1d(2048)
+        self.text_bn = nn.BatchNorm1d(2048)
+        self.concat_bn = nn.BatchNorm1d(2048)
         
-        self.fc1 = nn.Linear(768 + 1000, 2048)
-        self.batch_normal = nn.BatchNorm1d(2048)
-                
-        self.fc2 = nn.Linear(2048, 11014)
+        self._init_params()
         
-    def forward(self, image, sent_id, mask):
+        #self.fc2 = nn.Linear(2048, 11014)
+        final_in_features = 2048
         
-        effi_output = self.efficient_net(image)
-        bert_output = self.bert(sent_id, attention_mask = mask)
+        self.image_final = ArcMarginProduct(
+            in_features = final_in_features,
+            out_features = 11014,
+            scale = 30,
+            margin = 0.5,
+            easy_margin = False,
+            ls_eps = 0.0
+        )
         
-        # effi_output = torch.flatten(effi_output, 1)
+        self.text_final = ArcMarginProduct(
+            in_features = final_in_features,
+            out_features = 11014,
+            scale = 30,
+            margin = 0.5,
+            easy_margin = False,
+            ls_eps = 0.0
+        )
+        
+        self.concat_final = ArcMarginProduct(
+            in_features = final_in_features,
+            out_features = 11014,
+            scale = 30,
+            margin = 0.5,
+            easy_margin = False,
+            ls_eps = 0.0
+        )
 
-        x = torch.cat((bert_output[1], effi_output), dim=1)
         
-        x = self.fc1(x)
-        x = self.batch_normal(x)
-        x = F.relu(x)
+    def _init_params(self):
+        nn.init.xavier_normal_(self.image_fc.weight)
+        nn.init.constant_(self.image_fc.bias, 0)
+        nn.init.constant_(self.image_bn.weight, 1)
+        nn.init.constant_(self.image_bn.bias, 0)
+    
+    def forward(self, image, sent_id, mask, label):
+        
+        # x: image backbone output
+        # y: text backbone output
+        # z: concatenated output
+        
+        x = self.image_backbone.extract_features(image)
+        x = self.pooling(x).view(x.size(0), -1)
+        y = self.text_backbone(sent_id, attention_mask = mask)
+        
+        z = torch.cat((x, y[1]), dim=1)
 
-        x = self.drouput(x)
-        x = self.fc2(x)
-        x = F.relu(x)
+        x = self.image_drouput(x)
+        y = self.text_drouput(y[1])
+        z = self.concat_drouput(z)
+
         
-        y = self.image_fc(effi_output)
-        y = F.relu(y)
-        y = self.image_fc2(y)
-        y = F.relu(y)
+        x = self.image_fc(x)
+        y = self.text_fc(y)
+        z = self.concat_fc(z)
         
-        z = self.text_fc(bert_output[1])
-        z = F.relu(z)
-        z = self.text_fc2(z)
-        z = F.relu(z)
+        x = self.image_bn(x)
+        y = self.text_bn(y)
+        z = self.concat_bn(z)
+        
+        x = self.image_final(x, label)
+        y = self.text_final(y,label)
+        z = self.concat_final(z,label)
+        
         return x, y, z
     
 #%%
@@ -228,9 +305,9 @@ if __name__ == "__main__":
                                    tokenizer = tokenizer,
                                    transform = my_transforms)
     
-    images_train_set, images_test_set = torch.utils.data.random_split(images_dataset, [30000, 4250])
-    train_loader = DataLoader(dataset = images_train_set, batch_size = batch_size, shuffle = True)
-    test_loader =  DataLoader(dataset = images_test_set, batch_size = batch_size, shuffle = True)
+    train_set, test_set = torch.utils.data.random_split(images_dataset, [30000, 4250])
+    train_loader = DataLoader(dataset = train_set, batch_size = batch_size, shuffle = True)
+    test_loader =  DataLoader(dataset = test_set, batch_size = batch_size, shuffle = True)
         
     
     # import efficientnet b3 model
@@ -241,14 +318,14 @@ if __name__ == "__main__":
     image_model.to(dev)
     bert.to(dev)
     
-    
     # freeze all the parameters
     for param in bert.parameters():
         param.requires_grad = False
     for param in image_model.parameters():
         param.requires_grad = False
-        
-    #sys.exit()
+    
+    print("\n")
+    print("Start building efficientNet+Bert Model...")
     model = bert_efficientNet(bert, image_model)
     model.to(dev)
     crit = nn.CrossEntropyLoss()
@@ -256,14 +333,19 @@ if __name__ == "__main__":
     t_loss_history = []
     
     if not args.eval:
-        print("Training the model")
+        print("\n")
+        print("Start training....")
     
         for epoch in range(num_epochs):
             t_loss = train(model, train_loader, optimizer, crit, epoch + 1)
             #accuracy(train_loader, model)
-            t_loss_history.append(t_loss)
-            print("Training loss:", t_loss)
             
+            t_loss_history.append(t_loss)
+            
+            print(f'Epoch: {epoch + 1:02}\t Train Loss: {t_loss:.3f}')
+            
+        # TODO add the early stopping on validation set here
+        # store the last epoch so far
         torch.save(model.state_dict(), "best-checkpoint.pt")
             
     model.load_state_dict(torch.load("best-checkpoint.pt"))
