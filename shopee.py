@@ -125,7 +125,10 @@ def train(model, data_loader, optimizer, crit, epoch):
         
         model.zero_grad()
         preds_1, preds_2, preds_3 = model(image_data, text_seq, text_mask, targets)
-           
+          
+        print(preds_1)
+        print(targets)
+        sys.exit()
         loss1 = crit(preds_1, targets)
         loss2 = crit(preds_2, targets)
         loss3 = crit(preds_3, targets)
@@ -142,7 +145,31 @@ def train(model, data_loader, optimizer, crit, epoch):
     pbar.close()
     avg_loss = epoch_loss / len(data_loader)
     return avg_loss
+
+def evaluate(mode, data_loader, crit, epoch):
+    print("evaluating validation set")
+    model.eval()
+    epoch_loss = 0
+    
+    for batch, (image_data, text_seq, text_mask, targets) in enumerate(data_loader):
+        image_data = image_data.to(dev)
+        text_seq = text_seq.to(dev)
+        text_mask = text_mask.to(dev)
+        targets = targets.to(dev)
         
+        model.zero_grad()
+        preds_1, preds_2, preds_3 = model(image_data, text_seq, text_mask, targets)
+        
+        loss1 = crit(preds_1, targets)
+        loss2 = crit(preds_2, targets)
+        loss3 = crit(preds_3, targets)
+        
+        loss = loss1 + loss2 + loss3
+        
+        epoch_loss += loss.item()
+    
+    avg_loss = epoch_loss / len(data_loader)
+    return avg_loss
     
 #%%
 class ArcMarginProduct(nn.Module):
@@ -210,6 +237,16 @@ class bert_efficientNet(nn.Module):
         self.text_bn = nn.BatchNorm1d(2048)
         self.concat_bn = nn.BatchNorm1d(2048)
         
+        ##############################
+        self.image_fc2 = nn.Linear(2048, 2048)
+        self.text_fc2 = nn.Linear(2048, 2048)
+        self.concat_fc2 = nn.Linear(2048, 2048)
+        
+        self.image_bn2 = nn.BatchNorm1d(2048)
+        self.text_bn2 = nn.BatchNorm1d(2048)
+        self.concat_bn2 = nn.BatchNorm1d(2048)
+        ###############################
+        
         self._init_params()
         
         #self.fc2 = nn.Linear(2048, 11014)
@@ -258,13 +295,11 @@ class bert_efficientNet(nn.Module):
         x = self.image_backbone.extract_features(image)
         x = self.pooling(x).view(x.size(0), -1)
         y = self.text_backbone(sent_id, attention_mask = mask)
-        
         z = torch.cat((x, y[1]), dim=1)
 
         x = self.image_drouput(x)
         y = self.text_drouput(y[1])
         z = self.concat_drouput(z)
-
         
         x = self.image_fc(x)
         y = self.text_fc(y)
@@ -274,9 +309,28 @@ class bert_efficientNet(nn.Module):
         y = self.text_bn(y)
         z = self.concat_bn(z)
         
+        # residual
+        residual1 = x
+        residual2 = y
+        residual3 = z
+        
+        x = self.image_fc2(x)
+        y = self.text_fc2(y)
+        z = self.concat_fc2(z)
+        
+        x = self.image_bn2(x)
+        y = self.text_bn2(y)
+        z = self.concat_bn2(z)
+        
+        # residual
+        x += residual1
+        y += residual2
+        z += residual3
+        
         x = self.image_final(x, label)
         y = self.text_final(y,label)
         z = self.concat_final(z,label)
+        
         
         return x, y, z
     
@@ -324,13 +378,14 @@ if __name__ == "__main__":
     for param in image_model.parameters():
         param.requires_grad = False
     
-    print("\n")
     print("Start building efficientNet+Bert Model...")
     model = bert_efficientNet(bert, image_model)
     model.to(dev)
     crit = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters())
-    t_loss_history = []
+    t_loss_history, v_loss_history = [], []
+    
+    best_valid_loss = float('inf')
     
     if not args.eval:
         print("\n")
@@ -338,15 +393,19 @@ if __name__ == "__main__":
     
         for epoch in range(num_epochs):
             t_loss = train(model, train_loader, optimizer, crit, epoch + 1)
+            v_loss = evaluate(model, test_loader, crit, epoch + 1)
+            
             #accuracy(train_loader, model)
             
             t_loss_history.append(t_loss)
+            v_loss_history.append(v_loss)
+            print("\n")
+            print(f'Epoch: {epoch + 1:02}\t Train Loss: {t_loss:.3f} | Valid Loss: {v_loss:.3f}')
             
-            print(f'Epoch: {epoch + 1:02}\t Train Loss: {t_loss:.3f}')
             
-        # TODO add the early stopping on validation set here
-        # store the last epoch so far
-        torch.save(model.state_dict(), "best-checkpoint.pt")
+            if v_loss < best_valid_loss:
+                best_valid_loss = v_loss
+                torch.save(model.state_dict(), "best-checkpoint.pt")
             
     model.load_state_dict(torch.load("best-checkpoint.pt"))
     print("\n")
